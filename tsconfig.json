@@ -1,0 +1,22 @@
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"lib": ["ESNext", "DOM"],
+		"rootDir": ".",
+		"strict": true,
+		"declaration": true,
+		"declarationDir": "./dist",
+		"emitDeclarationOnly": true,
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true,
+		"moduleResolution": "node",
+		"resolveJsonModule": true,
+		"isolatedModules": true,
+		"composite": true,
+		"module": "ESNext",
+		"allowImportingTsExtensions": true
+	},
+	"include": [".munk/client.ts", "src/Jet.ts"],
+	"exclude": ["node_modules", "dist"]
+}

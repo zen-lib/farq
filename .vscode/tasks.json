@@ -1,0 +1,15 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "node esbuild.dev.config.js",
+			"type": "shell",
+			"command": "node",
+			"args": ["esbuild.dev.config.js"],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		}
+	]
+}
