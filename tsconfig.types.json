@@ -2,10 +2,10 @@
 	"compilerOptions": {
 		"target": "ESNext",
 		"lib": ["ESNext", "DOM"],
-		"rootDir": ".",
+		"rootDir": "src",
 		"strict": true,
 		"declaration": true,
-		"declarationDir": "./dist",
+		"declarationDir": "dist",
 		"emitDeclarationOnly": true,
 		"esModuleInterop": true,
 		"skipLibCheck": true,
@@ -17,6 +17,6 @@
 		"module": "ESNext",
 		"allowImportingTsExtensions": true
 	},
-	"include": ["src/**/*.ts"],
+	"include": ["src/munk.ts"],
 	"exclude": ["node_modules", "dist"]
 }

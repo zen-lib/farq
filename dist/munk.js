@@ -6,10 +6,6 @@ import { build } from "esbuild";
 var project = new Project();
 var clientTemplate = readFileSync("src/client.template.ts", "utf8");
 var serverTemplate = readFileSync("src/server.template.ts", "utf8");
-munk({ dir: process.argv[2] || "./test/routes", outDir: process.argv[3] || "./dist" }).catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
 async function munk({
   dir,
   outDir = "./dist",
@@ -59,8 +55,7 @@ function genServerLevel(tree) {
   let result = "";
   for (const endpoint of tree.endpoints) {
     const snakePathPrefix = endpoint.subDirs.join("_");
-    const path = "/" + endpoint.subDirs.join("/") + "/" + endpoint.functionName;
-    result += `	'${path}': ${snakePathPrefix}_${endpoint.functionName},
+    result += `	app.post('/${endpoint.subDirs.join("/")}/${endpoint.functionName}', ${snakePathPrefix}_${endpoint.functionName});
 `;
   }
   for (const sub of tree.subs) {

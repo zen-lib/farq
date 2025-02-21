@@ -7,11 +7,6 @@ const project = new Project();
 const clientTemplate = readFileSync('src/client.template.ts', 'utf8');
 const serverTemplate = readFileSync('src/server.template.ts', 'utf8');
 
-munk({ dir: process.argv[2] || './test/routes', outDir: process.argv[3] || './dist' }).catch((err) => {
-	console.error(err);
-	process.exit(1);
-});
-
 interface Endpoint {
 	subDirs: string[];
 	functionName: string;
@@ -28,31 +23,36 @@ interface MunkTree {
 	endpoints: Endpoint[];
 }
 
+export type ClientMunkOptions {
+	outDir?: string;
+	tsOutDir?: string;
+	clientName?: string;
+}
+
+export type ServerMunkOptions {
+	outDir?: string;
+	tsOutDir?: string;
+	serverFileName?: string;
+}
 export interface MunkOptions {
 	dir: string;
-	outDir?: string;
-	serverFileName?: string;
-	clientFileName?: string;
-	munkDir?: string;
+	server: ServerMunkOptions;
+	client: ClientMunkOptions;
 }
 
 async function munk({
 	dir,
-	outDir = './dist',
-	serverFileName = 'server.ts',
-	clientFileName = 'client.ts',
-	munkDir = './.munk',
+	server: { outDir = 'dist', serverFileName = 'server.ts' },
+	client: { outDir: clientOutDir = 'dist', clientName = 'ApiClient' },
 }: MunkOptions) {
+
 	const tree = readRoutes(dir, []);
-	if (!existsSync(munkDir)) {
-		mkdirSync(munkDir, { recursive: true });
-	}
 	if (!existsSync(outDir)) {
 		mkdirSync(outDir, { recursive: true });
 	}
 	const client = genClient(tree);
-	const justClientFileName = clientFileName.split('.')[0];
-	writeFileSync(join(munkDir, `${justClientFileName}.ts`), client);
+	// const justClientFileName = clientFileName.split('.')[0];
+	writeFileSync(join(clientOutDir, `${clientName}.ts`), client);
 
 	let baseDirName = dir;
 	if (dir.startsWith('./')) {
