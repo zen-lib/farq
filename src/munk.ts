@@ -89,8 +89,11 @@ function genServerLevel(tree: MunkTree) {
 	let result = '';
 	for (const endpoint of tree.endpoints) {
 		const snakePathPrefix = endpoint.subDirs.join('_');
-		const path = '/' + endpoint.subDirs.join('/') + '/' + endpoint.functionName;
-		result += `\t'${path}': ${snakePathPrefix}_${endpoint.functionName},\n`;
+		result += `\tapp.post('/${endpoint.subDirs.join('/')}/${endpoint.functionName}', ${snakePathPrefix}_${
+			endpoint.functionName
+		});\n`;
+		// const path = '/' + endpoint.subDirs.join('/') + '/' + endpoint.functionName;
+		// result += `\t'${path}': ${snakePathPrefix}_${endpoint.functionName},\n`;
 	}
 	for (const sub of tree.subs) {
 		result += genServerLevel(sub);
