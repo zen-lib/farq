@@ -5,6 +5,7 @@ import { build, BuildOptions } from 'esbuild';
 
 // TODO: actually the latest idea: build server and client at the same time with imports to same files
 // * one imports the function (server) and the other one body and return types (client)
+// * see genTypesImports and continue from there
 
 const project = new Project();
 // TODO: move inside the function
@@ -84,12 +85,12 @@ async function easyRpc({
 }
 
 function genRouter(tree: EasyRpcTree, dir: string) {
-	let result = serverTemplate.replace('/* {{imports}} */', genImports(tree, dir));
-	result = result.replace('/* {{routes}} */', genServerLevel(tree));
+	let result = serverTemplate.replace('/* {{imports}} */', genFuncImports(tree, dir));
+	result = result.replace('/* {{routes}} */', genRouterLevel(tree));
 	return result;
 }
 
-function genImports(tree: EasyRpcTree, baseDirName: string) {
+function genFuncImports(tree: EasyRpcTree, baseDirName: string) {
 	let result = '';
 	for (const endpoint of tree.endpoints) {
 		const snakePathPrefix = endpoint.subDirs.join('_');
@@ -98,12 +99,28 @@ function genImports(tree: EasyRpcTree, baseDirName: string) {
 		)}/${endpoint.fileName}';\n`;
 	}
 	for (const sub of tree.subs) {
-		result += genImports(sub, baseDirName);
+		result += genFuncImports(sub, baseDirName);
 	}
 	return result;
 }
 
-function genServerLevel(tree: EasyRpcTree) {
+function genTypesImports(tree: EasyRpcTree, baseDirName: string) {
+	let result = '';
+	for (const endpoint of tree.endpoints) {
+		const snakePathPrefix = endpoint.subDirs.join('_');
+		result += `import { ${endpoint.bodyTypeName} as ${snakePathPrefix}_${endpoint.bodyTypeName}, ${
+			endpoint.returnTypeName
+		} as ${snakePathPrefix}_${endpoint.returnTypeName} } from '../${baseDirName}/${endpoint.subDirs.join('/')}/${
+			endpoint.fileName
+		}';\n`;
+	}
+	for (const sub of tree.subs) {
+		result += genTypesImports(sub, baseDirName);
+	}
+	return result;
+}
+
+function genRouterLevel(tree: EasyRpcTree) {
 	let result = '';
 	for (const endpoint of tree.endpoints) {
 		const snakePathPrefix = endpoint.subDirs.join('_');
@@ -114,7 +131,7 @@ function genServerLevel(tree: EasyRpcTree) {
 		// result += `\t'${path}': ${snakePathPrefix}_${endpoint.functionName},\n`;
 	}
 	for (const sub of tree.subs) {
-		result += genServerLevel(sub);
+		result += genRouterLevel(sub);
 	}
 	return result;
 }
@@ -150,7 +167,7 @@ function genNamespacedTypes(tree: EasyRpcTree, level: number) {
 }
 
 function genClient(tree: EasyRpcTree) {
-	let result = clientTemplate.replace('/* {{imports}} */', genImports(tree, ''));
+	let result = clientTemplate.replace('/* {{imports}} */', genFuncImports(tree, ''));
 	result = result.replace('/* {{types}} */', genNamespacedTypes(tree, 0));
 	result = result.replace('/* {{functions}} */', genClientLevel(tree, 0));
 	return result;
