@@ -7,19 +7,19 @@ const pkg = require('./package.json');
 
 /** @type {import('esbuild').BuildOptions} */
 const baseConfig = {
-	bundle: true,
-	external: [
-		// Get all dependencies from package.json
-		...Object.keys(pkg.dependencies || {}),
-		...Object.keys(pkg.peerDependencies || {}),
-		...Object.keys(pkg.devDependencies || {}),
-	],
+	bundle: false,
+	// external: [
+	// 	// Get all dependencies from package.json
+	// 	...Object.keys(pkg.dependencies || {}),
+	// 	...Object.keys(pkg.peerDependencies || {}),
+	// 	...Object.keys(pkg.devDependencies || {}),
+	// ],
 };
 
 Promise.all([
 	build({
 		...baseConfig,
-		entryPoints: ['src/munk.ts'],
+		entryPoints: ['src/munk_cli.ts', 'src/munk.ts'],
 		platform: 'node',
 		format: 'esm',
 		outdir: 'dist',

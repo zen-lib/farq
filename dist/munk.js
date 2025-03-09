@@ -1,36 +1,34 @@
-// src/munk.ts
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { join, extname } from "path";
 import { Project } from "ts-morph";
 import { build } from "esbuild";
-var project = new Project();
-var clientTemplate = readFileSync("src/client.template.ts", "utf8");
-var serverTemplate = readFileSync("src/server.template.ts", "utf8");
-async function munk({
-  dir,
-  outDir = "./dist",
-  serverFileName = "server.ts",
-  clientFileName = "client.ts",
-  munkDir = "./.munk"
-}) {
+const project = new Project();
+const clientTemplate = readFileSync("src/client.template.ts", "utf8");
+const serverTemplate = readFileSync("src/server.template.ts", "utf8");
+async function munk({ dir, server = {}, client = {} }) {
+  const outDir = server?.outDir || "dist";
+  const serverFileName = server?.serverFileName || "server.ts";
+  const tsOutDir = server?.tsOutDir || "src";
+  const clientOutDir = client?.outDir || "dist/client";
+  const clientName = client?.clientName || "ApiClient";
   const tree = readRoutes(dir, []);
-  if (!existsSync(munkDir)) {
-    mkdirSync(munkDir, { recursive: true });
-  }
   if (!existsSync(outDir)) {
     mkdirSync(outDir, { recursive: true });
   }
-  const client = genClient(tree);
-  const justClientFileName = clientFileName.split(".")[0];
-  writeFileSync(join(munkDir, `${justClientFileName}.ts`), client);
+  if (!existsSync(clientOutDir)) {
+    mkdirSync(clientOutDir, { recursive: true });
+  }
+  const clientCode = genClient(tree);
+  const justClientFileName = `${clientName}.ts`;
+  writeFileSync(join(clientOutDir, justClientFileName), clientCode);
   let baseDirName = dir;
   if (dir.startsWith("./")) {
     baseDirName = dir.slice(2);
   }
-  const server = genServer(tree, baseDirName);
+  const serverCode = genServer(tree, baseDirName);
   const justServerName = serverFileName.split(".")[0];
-  writeFileSync(join(munkDir, `${justServerName}.ts`), server);
-  await buildJs({ outDir, munkDir, serverFileName: justServerName, clientFileName: justClientFileName });
+  writeFileSync(join(tsOutDir, `${justServerName}.ts`), serverCode);
+  await buildJs({ outDir, tsOutDir, serverFileName: justServerName, clientFileName: justClientFileName });
 }
 function genServer(tree, dir) {
   let result = serverTemplate.replace("/* {{imports}} */", genImports(tree, dir));
@@ -214,7 +212,7 @@ ${"	".repeat(
   )}await this.jet<${dotTypesPath}.${bodyTypeName}, ${dotTypesPath}.${returnTypeName}>('${path}/${functionName}', { body })${end}
 `;
 }
-async function buildJs({ outDir, serverFileName, clientFileName, munkDir }) {
+async function buildJs({ outDir, serverFileName, clientFileName, tsOutDir }) {
   const pkg = JSON.parse(readFileSync("./package.json", "utf8"));
   const baseConfig = {
     bundle: true,
@@ -228,14 +226,14 @@ async function buildJs({ outDir, serverFileName, clientFileName, munkDir }) {
   await Promise.all([
     build({
       ...baseConfig,
-      entryPoints: [`${munkDir}/${clientFileName}.ts`],
+      entryPoints: [`${tsOutDir}/${clientFileName}.ts`],
       platform: "browser",
       format: "esm",
       outdir: outDir
     }),
     build({
       ...baseConfig,
-      entryPoints: [`${munkDir}/${clientFileName}.ts`],
+      entryPoints: [`${tsOutDir}/${clientFileName}.ts`],
       platform: "browser",
       format: "cjs",
       outdir: outDir,
@@ -243,14 +241,14 @@ async function buildJs({ outDir, serverFileName, clientFileName, munkDir }) {
     }),
     build({
       ...baseConfig,
-      entryPoints: [`${munkDir}/${serverFileName}.ts`],
+      entryPoints: [`${tsOutDir}/${serverFileName}.ts`],
       platform: "node",
       format: "esm",
       outdir: outDir
     }),
     build({
       ...baseConfig,
-      entryPoints: [`${munkDir}/${serverFileName}.ts`],
+      entryPoints: [`${tsOutDir}/${serverFileName}.ts`],
       platform: "node",
       format: "cjs",
       outdir: outDir,

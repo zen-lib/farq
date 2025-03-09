@@ -23,46 +23,51 @@ interface MunkTree {
 	endpoints: Endpoint[];
 }
 
-export type ClientMunkOptions {
+export type ClientMunkOptions = {
 	outDir?: string;
-	tsOutDir?: string;
+	tempTsDir?: string;
 	clientName?: string;
-}
+};
 
-export type ServerMunkOptions {
+export type ServerMunkOptions = {
 	outDir?: string;
 	tsOutDir?: string;
 	serverFileName?: string;
-}
-export interface MunkOptions {
-	dir: string;
-	server: ServerMunkOptions;
-	client: ClientMunkOptions;
-}
+};
 
-async function munk({
-	dir,
-	server: { outDir = 'dist', serverFileName = 'server.ts' },
-	client: { outDir: clientOutDir = 'dist', clientName = 'ApiClient' },
-}: MunkOptions) {
+export type MunkOptions = {
+	dir: string;
+	server?: ServerMunkOptions;
+	client?: ClientMunkOptions;
+};
+
+async function munk({ dir, server = {}, client = {} }: MunkOptions) {
+	const outDir = server?.outDir || 'dist';
+	const serverFileName = server?.serverFileName || 'server.ts';
+	const tsOutDir = server?.tsOutDir || 'src';
+	const clientOutDir = client?.outDir || 'dist/client';
+	const clientName = client?.clientName || 'ApiClient';
 
 	const tree = readRoutes(dir, []);
 	if (!existsSync(outDir)) {
 		mkdirSync(outDir, { recursive: true });
 	}
-	const client = genClient(tree);
-	// const justClientFileName = clientFileName.split('.')[0];
-	writeFileSync(join(clientOutDir, `${clientName}.ts`), client);
+	if (!existsSync(clientOutDir)) {
+		mkdirSync(clientOutDir, { recursive: true });
+	}
+	const clientCode = genClient(tree);
+	const justClientFileName = `${clientName}.ts`;
+	writeFileSync(join(clientOutDir, justClientFileName), clientCode);
 
 	let baseDirName = dir;
 	if (dir.startsWith('./')) {
 		baseDirName = dir.slice(2);
 	}
-	const server = genServer(tree, baseDirName);
+	const serverCode = genServer(tree, baseDirName);
 	const justServerName = serverFileName.split('.')[0];
-	writeFileSync(join(munkDir, `${justServerName}.ts`), server);
+	writeFileSync(join(tsOutDir, `${justServerName}.ts`), serverCode);
 
-	await buildJs({ outDir, munkDir, serverFileName: justServerName, clientFileName: justClientFileName });
+	await buildJs({ outDir, tsOutDir: tsOutDir, serverFileName: justServerName, clientFileName: justClientFileName });
 }
 
 function genServer(tree: MunkTree, dir: string) {
@@ -295,10 +300,10 @@ interface BuildJSOptions {
 	outDir: string;
 	serverFileName: string;
 	clientFileName: string;
-	munkDir: string;
+	tsOutDir: string;
 }
 
-async function buildJs({ outDir, serverFileName, clientFileName, munkDir }: BuildJSOptions) {
+async function buildJs({ outDir, serverFileName, clientFileName, tsOutDir }: BuildJSOptions) {
 	const pkg = JSON.parse(readFileSync('./package.json', 'utf8'));
 
 	const baseConfig: BuildOptions = {
@@ -314,14 +319,14 @@ async function buildJs({ outDir, serverFileName, clientFileName, munkDir }: Buil
 	await Promise.all([
 		build({
 			...baseConfig,
-			entryPoints: [`${munkDir}/${clientFileName}.ts`],
+			entryPoints: [`${tsOutDir}/${clientFileName}.ts`],
 			platform: 'browser',
 			format: 'esm',
 			outdir: outDir,
 		}),
 		build({
 			...baseConfig,
-			entryPoints: [`${munkDir}/${clientFileName}.ts`],
+			entryPoints: [`${tsOutDir}/${clientFileName}.ts`],
 			platform: 'browser',
 			format: 'cjs',
 			outdir: outDir,
@@ -329,14 +334,14 @@ async function buildJs({ outDir, serverFileName, clientFileName, munkDir }: Buil
 		}),
 		build({
 			...baseConfig,
-			entryPoints: [`${munkDir}/${serverFileName}.ts`],
+			entryPoints: [`${tsOutDir}/${serverFileName}.ts`],
 			platform: 'node',
 			format: 'esm',
 			outdir: outDir,
 		}),
 		build({
 			...baseConfig,
-			entryPoints: [`${munkDir}/${serverFileName}.ts`],
+			entryPoints: [`${tsOutDir}/${serverFileName}.ts`],
 			platform: 'node',
 			format: 'cjs',
 			outdir: outDir,
