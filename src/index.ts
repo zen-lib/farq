@@ -1,7 +1,11 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
 import { join, extname } from 'path';
 import { Project, FunctionDeclaration } from 'ts-morph';
-import { build, BuildOptions } from 'esbuild';
+
+// TODO: think how to resolve import paths for both client and server
+// * need to think how to determine output dir for both client and server
+// * as they are not acutally related to entryDir at the moment
+// * maybe router and client outputs needs to be set relative to entryDir
 
 const project = new Project();
 // TODO: move inside the function and read path from options
