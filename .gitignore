@@ -3,3 +3,4 @@ dbg/
 dev/
 node_modules/
 test/
+*.tsbuildinfo
