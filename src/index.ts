@@ -4,8 +4,22 @@ import { Project, FunctionDeclaration } from 'ts-morph';
 import { build, BuildOptions } from 'esbuild';
 
 const project = new Project();
+// TODO: move inside the function
 const clientTemplate = readFileSync('src/client.template.ts', 'utf8');
 const serverTemplate = readFileSync('src/server.template.ts', 'utf8');
+
+export type EasyRpcOptions = {
+	entryDir: string;
+	endpointPathPrefix?: string;
+	routerFilePath?: string;
+	client?: ClientOptions;
+};
+
+export type ClientOptions = {
+	outDir?: string;
+	tempTsDir?: string;
+	clientName?: string;
+};
 
 interface Endpoint {
 	subDirs: string[];
@@ -17,66 +31,62 @@ interface Endpoint {
 	returnTypeDeclaration: string;
 }
 
-interface MunkTree {
+interface EasyRpcTree {
 	dir: string | undefined;
-	subs: MunkTree[];
+	subs: EasyRpcTree[];
 	endpoints: Endpoint[];
 }
 
-export type ClientMunkOptions = {
-	outDir?: string;
-	tempTsDir?: string;
-	clientName?: string;
-};
-
-export type ServerMunkOptions = {
-	outDir?: string;
-	tsOutDir?: string;
-	serverFileName?: string;
-};
-
-export type MunkOptions = {
-	dir: string;
-	server?: ServerMunkOptions;
-	client?: ClientMunkOptions;
-};
-
-async function munk({ dir, server = {}, client = {} }: MunkOptions) {
-	const outDir = server?.outDir || 'dist';
-	const serverFileName = server?.serverFileName || 'server.ts';
-	const tsOutDir = server?.tsOutDir || 'src';
+async function easyRpc({
+	entryDir,
+	// TODO: implement endpointPathPrefix
+	endpointPathPrefix = '',
+	routerFilePath = 'src/rpcRouter.ts',
+	client = {},
+}: EasyRpcOptions) {
+	const clientName = client?.clientName || 'RpcClient';
+	const routerOutDir = routerFilePath.split('/').slice(0, -1).join('/');
+	const tempTsDir = client?.tempTsDir || '.erpc';
 	const clientOutDir = client?.outDir || 'dist/client';
-	const clientName = client?.clientName || 'ApiClient';
 
-	const tree = readRoutes(dir, []);
-	if (!existsSync(outDir)) {
-		mkdirSync(outDir, { recursive: true });
+	const tree = readRoutes(entryDir, []);
+
+	if (!existsSync(routerOutDir)) {
+		mkdirSync(routerOutDir, { recursive: true });
+	}
+	if (!existsSync(tempTsDir)) {
+		mkdirSync(tempTsDir, { recursive: true });
 	}
 	if (!existsSync(clientOutDir)) {
 		mkdirSync(clientOutDir, { recursive: true });
 	}
+
 	const clientCode = genClient(tree);
 	const justClientFileName = `${clientName}.ts`;
-	writeFileSync(join(clientOutDir, justClientFileName), clientCode);
+	/* TODO: types should go directly to .ts files instead of namespacaes
+	 * genClient needs to result in multiple files one is RpcClient.ts and the other are type files in appropriate folder structure
+	 * I guess I need to add another build step with tsc to build types into dist for client
+	 * yes because RpcClient.ts types will also need to be compiled on top of esbuild
+	 */
+	writeFileSync(join(tempTsDir, justClientFileName), clientCode);
 
-	let baseDirName = dir;
-	if (dir.startsWith('./')) {
-		baseDirName = dir.slice(2);
+	let baseDirName = entryDir;
+	if (entryDir.startsWith('./')) {
+		baseDirName = entryDir.slice(2);
 	}
-	const serverCode = genServer(tree, baseDirName);
-	const justServerName = serverFileName.split('.')[0];
-	writeFileSync(join(tsOutDir, `${justServerName}.ts`), serverCode);
+	const routerCode = genRouter(tree, baseDirName);
+	writeFileSync(routerFilePath, routerCode);
 
-	await buildJs({ outDir, tsOutDir: tsOutDir, serverFileName: justServerName, clientFileName: justClientFileName });
+	await buildClient({ clientFileName: justClientFileName, outDir: clientOutDir, tempTsDir });
 }
 
-function genServer(tree: MunkTree, dir: string) {
+function genRouter(tree: EasyRpcTree, dir: string) {
 	let result = serverTemplate.replace('/* {{imports}} */', genImports(tree, dir));
 	result = result.replace('/* {{routes}} */', genServerLevel(tree));
 	return result;
 }
 
-function genImports(tree: MunkTree, baseDirName: string) {
+function genImports(tree: EasyRpcTree, baseDirName: string) {
 	let result = '';
 	for (const endpoint of tree.endpoints) {
 		const snakePathPrefix = endpoint.subDirs.join('_');
@@ -90,7 +100,7 @@ function genImports(tree: MunkTree, baseDirName: string) {
 	return result;
 }
 
-function genServerLevel(tree: MunkTree) {
+function genServerLevel(tree: EasyRpcTree) {
 	let result = '';
 	for (const endpoint of tree.endpoints) {
 		const snakePathPrefix = endpoint.subDirs.join('_');
@@ -106,7 +116,7 @@ function genServerLevel(tree: MunkTree) {
 	return result;
 }
 
-function genNamespacedTypes(tree: MunkTree, level: number) {
+function genNamespacedTypes(tree: EasyRpcTree, level: number) {
 	let result = '';
 	if (tree.dir) {
 		result += `export namespace ${tree.dir} {\n`;
@@ -136,14 +146,14 @@ function genNamespacedTypes(tree: MunkTree, level: number) {
 	return result;
 }
 
-function genClient(tree: MunkTree) {
+function genClient(tree: EasyRpcTree) {
 	let result = clientTemplate.replace('/* {{imports}} */', genImports(tree, ''));
 	result = result.replace('/* {{types}} */', genNamespacedTypes(tree, 0));
 	result = result.replace('/* {{functions}} */', genClientLevel(tree, 0));
 	return result;
 }
 
-function genClientLevel(tree: MunkTree, level: number) {
+function genClientLevel(tree: EasyRpcTree, level: number) {
 	let result = '';
 	if (tree.dir) {
 		const separator = level < 2 ? ' =' : ':';
@@ -161,11 +171,11 @@ function genClientLevel(tree: MunkTree, level: number) {
 	return result;
 }
 
-function readRoutes(baseDir: string, subDirs: string[]): MunkTree {
+function readRoutes(baseDir: string, subDirs: string[]): EasyRpcTree {
 	const dir = join(baseDir, subDirs.join('/'));
 	const items = readdirSync(dir);
 
-	const tree: MunkTree = {
+	const tree: EasyRpcTree = {
 		dir: subDirs.length > 0 ? subDirs[subDirs.length - 1] : undefined,
 		subs: [],
 		endpoints: [],
@@ -298,12 +308,13 @@ ${'\t'.repeat(
 
 interface BuildJSOptions {
 	outDir: string;
-	serverFileName: string;
 	clientFileName: string;
-	tsOutDir: string;
+	tempTsDir: string;
 }
 
-async function buildJs({ outDir, serverFileName, clientFileName, tsOutDir }: BuildJSOptions) {
+async function buildClient({ outDir, clientFileName, tempTsDir }: BuildJSOptions) {
+	// TODO: solve problem also with external dependencies of root monorepo package (not just current package)
+	// TODO: maybe add to options
 	const pkg = JSON.parse(readFileSync('./package.json', 'utf8'));
 
 	const baseConfig: BuildOptions = {
@@ -319,30 +330,15 @@ async function buildJs({ outDir, serverFileName, clientFileName, tsOutDir }: Bui
 	await Promise.all([
 		build({
 			...baseConfig,
-			entryPoints: [`${tsOutDir}/${clientFileName}.ts`],
+			entryPoints: [`${tempTsDir}/${clientFileName}.ts`],
 			platform: 'browser',
 			format: 'esm',
 			outdir: outDir,
 		}),
 		build({
 			...baseConfig,
-			entryPoints: [`${tsOutDir}/${clientFileName}.ts`],
+			entryPoints: [`${tempTsDir}/${clientFileName}.ts`],
 			platform: 'browser',
-			format: 'cjs',
-			outdir: outDir,
-			outExtension: { '.js': '.cjs' },
-		}),
-		build({
-			...baseConfig,
-			entryPoints: [`${tsOutDir}/${serverFileName}.ts`],
-			platform: 'node',
-			format: 'esm',
-			outdir: outDir,
-		}),
-		build({
-			...baseConfig,
-			entryPoints: [`${tsOutDir}/${serverFileName}.ts`],
-			platform: 'node',
 			format: 'cjs',
 			outdir: outDir,
 			outExtension: { '.js': '.cjs' },
@@ -350,4 +346,4 @@ async function buildJs({ outDir, serverFileName, clientFileName, tsOutDir }: Bui
 	]);
 }
 
-export default munk;
+export default easyRpc;
