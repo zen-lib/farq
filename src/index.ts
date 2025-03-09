@@ -7,6 +7,7 @@ import { Project, FunctionDeclaration } from 'ts-morph';
 // * as they are not acutally related to entryDir at the moment
 // * maybe router and client outputs needs to be set relative to entryDir
 // * path.normalize(path.join(...))
+// * no actually if all paths are relative to cwd then I can calculate paths for imports for client and server
 
 const project = new Project();
 // TODO: move inside the function and read path from options
