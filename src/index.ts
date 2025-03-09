@@ -260,6 +260,9 @@ function getFirstArgumentDeclaration(functionDeclaration: FunctionDeclaration): 
 	};
 }
 
+// TODO: get declarations recursively
+// TODO: ... or drop declarations handling for mvp
+// TODO: ... maybe I can use original declarations in client, with some special importing
 function getReturnTypeDeclaration(functionDeclaration: FunctionDeclaration): {
 	typeName: string | undefined;
 	declaration: string | undefined;
