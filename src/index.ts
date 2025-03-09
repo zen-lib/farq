@@ -3,6 +3,9 @@ import { join, extname } from 'path';
 import { Project, FunctionDeclaration } from 'ts-morph';
 import { build, BuildOptions } from 'esbuild';
 
+// TODO: actually the latest idea: build server and client at the same time with imports to same files
+// * one imports the function (server) and the other one body and return types (client)
+
 const project = new Project();
 // TODO: move inside the function
 const clientTemplate = readFileSync('src/client.template.ts', 'utf8');
