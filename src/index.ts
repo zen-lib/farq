@@ -3,12 +3,8 @@ import { join, extname } from 'path';
 import { Project, FunctionDeclaration } from 'ts-morph';
 import { build, BuildOptions } from 'esbuild';
 
-// TODO: actually the latest idea: build server and client at the same time with imports to same files
-// * one imports the function (server) and the other one body and return types (client)
-// * see genTypesImports and continue from there
-
 const project = new Project();
-// TODO: move inside the function
+// TODO: move inside the function and read path from options
 const clientTemplate = readFileSync('src/client.template.ts', 'utf8');
 const serverTemplate = readFileSync('src/server.template.ts', 'utf8');
 
@@ -21,7 +17,6 @@ export type EasyRpcOptions = {
 
 export type ClientOptions = {
 	outDir?: string;
-	tempTsDir?: string;
 	clientName?: string;
 };
 
@@ -30,9 +25,7 @@ interface Endpoint {
 	functionName: string;
 	fileName: string;
 	bodyTypeName: string;
-	bodyTypeDeclaration: string;
 	returnTypeName: string;
-	returnTypeDeclaration: string;
 }
 
 interface EasyRpcTree {
@@ -41,7 +34,7 @@ interface EasyRpcTree {
 	endpoints: Endpoint[];
 }
 
-async function easyRpc({
+export default async function easyRpc({
 	entryDir,
 	// TODO: implement endpointPathPrefix
 	endpointPathPrefix = '',
@@ -50,29 +43,20 @@ async function easyRpc({
 }: EasyRpcOptions) {
 	const clientName = client?.clientName || 'RpcClient';
 	const routerOutDir = routerFilePath.split('/').slice(0, -1).join('/');
-	const tempTsDir = client?.tempTsDir || '.erpc';
-	const clientOutDir = client?.outDir || 'dist/client';
+	const clientOutDir = client?.outDir || 'src/client/';
 
 	const tree = readRoutes(entryDir, []);
 
 	if (!existsSync(routerOutDir)) {
 		mkdirSync(routerOutDir, { recursive: true });
 	}
-	if (!existsSync(tempTsDir)) {
-		mkdirSync(tempTsDir, { recursive: true });
-	}
 	if (!existsSync(clientOutDir)) {
 		mkdirSync(clientOutDir, { recursive: true });
 	}
 
-	const clientCode = genClient(tree);
+	const clientCode = genClient(tree, clientOutDir);
 	const justClientFileName = `${clientName}.ts`;
-	/* TODO: types should go directly to .ts files instead of namespacaes
-	 * genClient needs to result in multiple files one is RpcClient.ts and the other are type files in appropriate folder structure
-	 * I guess I need to add another build step with tsc to build types into dist for client
-	 * yes because RpcClient.ts types will also need to be compiled on top of esbuild
-	 */
-	writeFileSync(join(tempTsDir, justClientFileName), clientCode);
+	writeFileSync(join(clientOutDir, justClientFileName), clientCode);
 
 	let baseDirName = entryDir;
 	if (entryDir.startsWith('./')) {
@@ -80,115 +64,116 @@ async function easyRpc({
 	}
 	const routerCode = genRouter(tree, baseDirName);
 	writeFileSync(routerFilePath, routerCode);
-
-	await buildClient({ clientFileName: justClientFileName, outDir: clientOutDir, tempTsDir });
 }
 
 function genRouter(tree: EasyRpcTree, dir: string) {
-	let result = serverTemplate.replace('/* {{imports}} */', genFuncImports(tree, dir));
-	result = result.replace('/* {{routes}} */', genRouterLevel(tree));
+	let result = updateRouterTemplate(serverTemplate, tree, dir, {});
+	result = result.replace('/* {{imports}} */', '');
+	result = result.replace('/* {{routes}} */', '');
 	return result;
 }
 
-function genFuncImports(tree: EasyRpcTree, baseDirName: string) {
-	let result = '';
+function updateRouterTemplate(
+	template: string,
+	tree: EasyRpcTree,
+	baseDirName: string,
+	usedNames: { [name: string]: number }
+) {
 	for (const endpoint of tree.endpoints) {
-		const snakePathPrefix = endpoint.subDirs.join('_');
-		result += `import ${snakePathPrefix}_${endpoint.functionName} from '../${baseDirName}/${endpoint.subDirs.join(
-			'/'
-		)}/${endpoint.fileName}';\n`;
+		let funcName = endpoint.functionName;
+		if (usedNames[funcName]) {
+			usedNames[funcName]++;
+			funcName = `${funcName}_${usedNames[funcName]}`;
+		}
+		const importInsertIndex = template.indexOf('/* {{imports}} */');
+		template =
+			template.slice(0, importInsertIndex) +
+			`import ${funcName} from '../${baseDirName}/${endpoint.subDirs.join('/')}/${endpoint.fileName}';\n` +
+			template.slice(importInsertIndex);
+
+		const routeInsertIndex = template.indexOf('/* {{routes}} */');
+		template =
+			template.slice(0, routeInsertIndex) +
+			`\tapp.post('/${endpoint.subDirs.join('/')}/${endpoint.functionName}', ${funcName});\n` +
+			template.slice(routeInsertIndex);
 	}
 	for (const sub of tree.subs) {
-		result += genFuncImports(sub, baseDirName);
+		template = updateRouterTemplate(template, sub, baseDirName, usedNames);
 	}
+	return template;
+}
+
+function genClient(tree: EasyRpcTree, dir: string) {
+	let result = updateClientTemplate(clientTemplate, tree, dir, 0, {});
+	result = result.replace('/* {{imports}} */', '');
+	result = result.replace('/* {{functions}} */', '');
 	return result;
 }
 
-function genTypesImports(tree: EasyRpcTree, baseDirName: string) {
-	let result = '';
+function updateClientTemplate(
+	template: string,
+	tree: EasyRpcTree,
+	baseDirName: string,
+	level: number,
+	usedNames: { [name: string]: number }
+) {
 	for (const endpoint of tree.endpoints) {
-		const snakePathPrefix = endpoint.subDirs.join('_');
-		result += `import { ${endpoint.bodyTypeName} as ${snakePathPrefix}_${endpoint.bodyTypeName}, ${
-			endpoint.returnTypeName
-		} as ${snakePathPrefix}_${endpoint.returnTypeName} } from '../${baseDirName}/${endpoint.subDirs.join('/')}/${
-			endpoint.fileName
-		}';\n`;
+		let bodyName = endpoint.bodyTypeName;
+		if (usedNames[bodyName]) {
+			usedNames[bodyName]++;
+			bodyName = `${bodyName}_${usedNames[bodyName]}`;
+		}
+		let returnName = endpoint.returnTypeName;
+		if (usedNames[returnName]) {
+			usedNames[returnName]++;
+			returnName = `${returnName}_${usedNames[returnName]}`;
+		}
+
+		const importsInsertIndex = template.indexOf('/* {{imports}} */');
+		template =
+			template.slice(0, importsInsertIndex) +
+			`import { ${bodyName}, ${returnName} } from '../${baseDirName}/${endpoint.subDirs.join('/')}/${
+				endpoint.fileName
+			}';\n` +
+			template.slice(importsInsertIndex);
+
+		const funcInsertIndex = template.indexOf('/* {{functions}} */');
+
+		if (tree.dir) {
+			template =
+				template.slice(0, funcInsertIndex) + `${'\t'.repeat(level)}${tree.dir}: {\n` + template.slice(funcInsertIndex);
+		}
+		for (const endpoint of tree.endpoints) {
+			template =
+				template.slice(0, funcInsertIndex) +
+				genClientFuncSnippet({ ...endpoint, bodyTypeName: bodyName, returnTypeName: returnName }, level) +
+				template.slice(funcInsertIndex);
+		}
+		for (const sub of tree.subs) {
+			template = updateClientTemplate(template, sub, baseDirName, level + 1, usedNames);
+		}
+		if (tree.dir) {
+			template = template.slice(0, funcInsertIndex) + `${'\t'.repeat(level)}}\n` + template.slice(funcInsertIndex);
+		}
 	}
 	for (const sub of tree.subs) {
-		result += genTypesImports(sub, baseDirName);
+		template = updateClientTemplate(template, sub, baseDirName, level + 1, usedNames);
 	}
-	return result;
+	return template;
 }
 
-function genRouterLevel(tree: EasyRpcTree) {
-	let result = '';
-	for (const endpoint of tree.endpoints) {
-		const snakePathPrefix = endpoint.subDirs.join('_');
-		result += `\tapp.post('/${endpoint.subDirs.join('/')}/${endpoint.functionName}', ${snakePathPrefix}_${
-			endpoint.functionName
-		});\n`;
-		// const path = '/' + endpoint.subDirs.join('/') + '/' + endpoint.functionName;
-		// result += `\t'${path}': ${snakePathPrefix}_${endpoint.functionName},\n`;
-	}
-	for (const sub of tree.subs) {
-		result += genRouterLevel(sub);
-	}
-	return result;
-}
-
-function genNamespacedTypes(tree: EasyRpcTree, level: number) {
-	let result = '';
-	if (tree.dir) {
-		result += `export namespace ${tree.dir} {\n`;
-	} else {
-		result += `export namespace types {\n`;
-	}
-	for (const endpoint of tree.endpoints) {
-		result +=
-			endpoint.bodyTypeDeclaration
-				.split('\n')
-				.map((line) => '\t' + line)
-				.join('\n') + '\n';
-		result +=
-			endpoint.returnTypeDeclaration
-				.split('\n')
-				.map((line) => '\t' + line)
-				.join('\n') + '\n';
-	}
-	for (const sub of tree.subs) {
-		result += genNamespacedTypes(sub, level + 1);
-	}
-	result += `}\n`;
-	result = result
-		.split('\n')
-		.map((line) => '\t'.repeat(level) + line)
-		.join('\n');
-	return result;
-}
-
-function genClient(tree: EasyRpcTree) {
-	let result = clientTemplate.replace('/* {{imports}} */', genFuncImports(tree, ''));
-	result = result.replace('/* {{types}} */', genNamespacedTypes(tree, 0));
-	result = result.replace('/* {{functions}} */', genClientLevel(tree, 0));
-	return result;
-}
-
-function genClientLevel(tree: EasyRpcTree, level: number) {
-	let result = '';
-	if (tree.dir) {
-		const separator = level < 2 ? ' =' : ':';
-		result += `${'\t'.repeat(level)}${tree.dir}${separator} {\n`;
-	}
-	for (const endpoint of tree.endpoints) {
-		result += genClientFuncSnippet(endpoint, level);
-	}
-	for (const sub of tree.subs) {
-		result += genClientLevel(sub, level + 1);
-	}
-	if (tree.dir) {
-		result += `${'\t'.repeat(level)}}\n`;
-	}
-	return result;
+function genClientFuncSnippet({ subDirs, functionName, bodyTypeName, returnTypeName }: Endpoint, level: number) {
+	const path = '/' + subDirs.join('/');
+	const dotTypesPath = ['types', ...subDirs].join('.');
+	const separator = level === 0 ? ' =' : ' :';
+	const end = level === 0 ? ';' : ',';
+	return `${'\t'.repeat(
+		level + 2
+	)}${functionName}${separator} async (body: ${dotTypesPath}.${bodyTypeName}): Promise<${dotTypesPath}.${returnTypeName}> =>
+${'\t'.repeat(
+	level + 3
+)}await jet<${dotTypesPath}.${bodyTypeName}, ${dotTypesPath}.${returnTypeName}>('${path}/${functionName}', { body })${end}
+`;
 }
 
 function readRoutes(baseDir: string, subDirs: string[]): EasyRpcTree {
@@ -218,14 +203,12 @@ function readRoutes(baseDir: string, subDirs: string[]): EasyRpcTree {
 					if (!functionName) {
 						continue;
 					}
-					const { typeName: firstArgTypeName, declaration: firstArgDeclaration } =
-						getFirstArgumentDeclaration(functionDeclaration);
-					if (!firstArgTypeName || !firstArgDeclaration) {
+					const firstArgTypeName = getFirstArgumentTypeName(functionDeclaration);
+					if (!firstArgTypeName) {
 						continue;
 					}
-					const { typeName: returnTypeName, declaration: returnDeclaration } =
-						getReturnTypeDeclaration(functionDeclaration);
-					if (!returnTypeName || !returnDeclaration) {
+					const returnTypeName = getReturnTypeName(functionDeclaration);
+					if (!returnTypeName) {
 						continue;
 					}
 
@@ -234,9 +217,7 @@ function readRoutes(baseDir: string, subDirs: string[]): EasyRpcTree {
 						functionName,
 						fileName: item,
 						bodyTypeName: firstArgTypeName,
-						bodyTypeDeclaration: firstArgDeclaration,
 						returnTypeName,
-						returnTypeDeclaration: returnDeclaration,
 					};
 
 					tree.endpoints.push(endpoint);
@@ -250,123 +231,23 @@ function readRoutes(baseDir: string, subDirs: string[]): EasyRpcTree {
 	return tree;
 }
 
-function getFirstArgumentDeclaration(functionDeclaration: FunctionDeclaration): {
-	typeName: string | undefined;
-	declaration: string | undefined;
-} {
+function getFirstArgumentTypeName(functionDeclaration: FunctionDeclaration): string | undefined {
 	const firstParameter = functionDeclaration.getParameters()[0];
 	if (!firstParameter) {
-		return { typeName: undefined, declaration: undefined };
+		return;
 	}
-
 	const parameterType = firstParameter.getType();
-	const typeSymbol = parameterType.getSymbol();
-
-	if (!typeSymbol) {
-		return { typeName: parameterType.getText(), declaration: undefined };
-	}
-
-	const declarations = typeSymbol.getDeclarations();
-	const declaration = declarations[0];
-
-	// Get clean type name without import
-	const fullTypeName = parameterType.getText();
-	const typeNameMatch = fullTypeName.match(/\.([^.]+)$/);
-	const cleanTypeName = typeNameMatch ? typeNameMatch[1] : fullTypeName;
-
-	return {
-		typeName: cleanTypeName,
-		declaration: declaration?.getText(),
-	};
+	return parameterType.getText();
 }
 
-// TODO: get declarations recursively
-// TODO: ... or drop declarations handling for mvp
-// TODO: ... maybe I can use original declarations in client, with some special importing
-function getReturnTypeDeclaration(functionDeclaration: FunctionDeclaration): {
-	typeName: string | undefined;
-	declaration: string | undefined;
-} {
+function getReturnTypeName(functionDeclaration: FunctionDeclaration): string | undefined {
 	const returnType = functionDeclaration.getReturnType();
 	const promiseTypeArgs = returnType.getTypeArguments();
 
 	if (promiseTypeArgs.length === 0) {
-		return { typeName: undefined, declaration: undefined };
+		return;
 	}
 
 	const promiseReturnType = promiseTypeArgs[0];
-	const returnTypeSymbol = promiseReturnType.getSymbol();
-
-	if (!returnTypeSymbol) {
-		return { typeName: promiseReturnType.getText(), declaration: undefined };
-	}
-
-	const returnTypeDeclarations = returnTypeSymbol.getDeclarations();
-	const returnTypeDeclaration = returnTypeDeclarations[0];
-
-	// Get clean type name without import
-	const fullTypeName = promiseReturnType.getText();
-	const typeNameMatch = fullTypeName.match(/\.([^.]+)$/);
-	const cleanTypeName = typeNameMatch ? typeNameMatch[1] : fullTypeName;
-
-	return {
-		typeName: cleanTypeName,
-		declaration: returnTypeDeclaration?.getText(),
-	};
+	return promiseReturnType.getText();
 }
-
-function genClientFuncSnippet({ subDirs, functionName, bodyTypeName, returnTypeName }: Endpoint, level: number) {
-	const path = '/' + subDirs.join('/');
-	const dotTypesPath = ['types', ...subDirs].join('.');
-	const separator = level === 0 ? ' =' : ' :';
-	const end = level === 0 ? ';' : ',';
-	return `${'\t'.repeat(
-		level + 2
-	)}${functionName}${separator} async (body: ${dotTypesPath}.${bodyTypeName}): Promise<${dotTypesPath}.${returnTypeName}> =>
-${'\t'.repeat(
-	level + 3
-)}await this.jet<${dotTypesPath}.${bodyTypeName}, ${dotTypesPath}.${returnTypeName}>('${path}/${functionName}', { body })${end}
-`;
-}
-
-interface BuildJSOptions {
-	outDir: string;
-	clientFileName: string;
-	tempTsDir: string;
-}
-
-async function buildClient({ outDir, clientFileName, tempTsDir }: BuildJSOptions) {
-	// TODO: solve problem also with external dependencies of root monorepo package (not just current package)
-	// TODO: maybe add to options
-	const pkg = JSON.parse(readFileSync('./package.json', 'utf8'));
-
-	const baseConfig: BuildOptions = {
-		bundle: true,
-		external: [
-			// Get all dependencies from package.json
-			...Object.keys(pkg.dependencies || {}),
-			...Object.keys(pkg.peerDependencies || {}),
-			...Object.keys(pkg.devDependencies || {}),
-		],
-	};
-
-	await Promise.all([
-		build({
-			...baseConfig,
-			entryPoints: [`${tempTsDir}/${clientFileName}.ts`],
-			platform: 'browser',
-			format: 'esm',
-			outdir: outDir,
-		}),
-		build({
-			...baseConfig,
-			entryPoints: [`${tempTsDir}/${clientFileName}.ts`],
-			platform: 'browser',
-			format: 'cjs',
-			outdir: outDir,
-			outExtension: { '.js': '.cjs' },
-		}),
-	]);
-}
-
-export default easyRpc;
