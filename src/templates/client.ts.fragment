@@ -1,0 +1,3 @@
+{{functionName}}: (body: {{bodyTypeName}}): Promise<{{returnTypeName}}> => {
+	return jet<{{bodyTypeName}}, {{returnTypeName}}>('{{endpoint}}', { body });
+}
