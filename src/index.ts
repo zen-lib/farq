@@ -38,13 +38,24 @@ interface EasyRpcTree {
 	endpoints: Endpoint[];
 }
 
-export default async function easyRpc({ entryDir, endpointPathPrefix = '', router = {}, client = {} }: EasyRpcOptions) {
+export default async function easyRpc({
+	entryDir,
+	endpointPathPrefix = '/',
+	router = {},
+	client = {},
+}: EasyRpcOptions) {
 	const clientName = client?.clientName || 'RpcClient';
 	const routerOutPath = router?.outPath || 'src/rpcRouter.ts';
 	const routerOutDir = routerOutPath.split('/').slice(0, -1).join('/');
 	const clientOutDir = client?.outDir || 'src/client/';
 	const clientTemplatePath = client?.templatePath || 'src/client/client.template.ts';
 	const routerTemplatePath = router?.templatePath || 'src/router.template.ts';
+
+	// Ensure endpointPathPrefix has leading and trailing slashes
+	if (endpointPathPrefix !== '/') {
+		endpointPathPrefix = endpointPathPrefix.startsWith('/') ? endpointPathPrefix : '/' + endpointPathPrefix;
+		endpointPathPrefix = endpointPathPrefix.endsWith('/') ? endpointPathPrefix : endpointPathPrefix + '/';
+	}
 
 	const clientTemplate = readFileSync(clientTemplatePath, 'utf8');
 	const routerTemplate = readFileSync(routerTemplatePath, 'utf8');
@@ -101,7 +112,7 @@ function updateRouterTemplate(
 		const routeInsertIndex = template.indexOf('/* {{routes}} */');
 		template =
 			template.slice(0, routeInsertIndex) +
-			`\tapp.post('/${prefix}/${endpoint.subDirs.join('/')}/${endpoint.functionName}', ${funcName});\n` +
+			`\tapp.post('${prefix}${endpoint.subDirs.join('/')}/${endpoint.functionName}', ${funcName});\n` +
 			template.slice(routeInsertIndex);
 	}
 	for (const sub of tree.subs) {
@@ -175,7 +186,7 @@ function genClientFuncSnippet(
 	prefix: string,
 	level: number
 ) {
-	const path = '/' + prefix + '/' + subDirs.join('/');
+	const path = prefix + subDirs.join('/');
 	const dotTypesPath = ['types', ...subDirs].join('.');
 	const separator = level === 0 ? ' =' : ' :';
 	const end = level === 0 ? ';' : ',';
