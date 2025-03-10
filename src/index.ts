@@ -3,20 +3,23 @@ import { join, extname, relative } from 'path';
 import { Project, FunctionDeclaration } from 'ts-morph';
 
 const project = new Project();
-// TODO: move inside the function and read path from options
-const clientTemplate = readFileSync('src/client.template.ts', 'utf8');
-const serverTemplate = readFileSync('src/server.template.ts', 'utf8');
 
 export type EasyRpcOptions = {
 	entryDir: string;
 	endpointPathPrefix?: string;
-	serverRouterOutPath?: string;
 	client?: ClientOptions;
+	router?: RouterOptions;
+};
+
+export type RouterOptions = {
+	outPath?: string;
+	templatePath?: string;
 };
 
 export type ClientOptions = {
 	outDir?: string;
 	clientName?: string;
+	templatePath?: string;
 };
 
 interface Endpoint {
@@ -33,16 +36,16 @@ interface EasyRpcTree {
 	endpoints: Endpoint[];
 }
 
-export default async function easyRpc({
-	entryDir,
-	// TODO: implement endpointPathPrefix
-	endpointPathPrefix = '',
-	serverRouterOutPath = 'src/rpcRouter.ts',
-	client = {},
-}: EasyRpcOptions) {
+export default async function easyRpc({ entryDir, endpointPathPrefix = '', router = {}, client = {} }: EasyRpcOptions) {
 	const clientName = client?.clientName || 'RpcClient';
-	const routerOutDir = serverRouterOutPath.split('/').slice(0, -1).join('/');
+	const routerOutPath = router?.outPath || 'src/rpcRouter.ts';
+	const routerOutDir = routerOutPath.split('/').slice(0, -1).join('/');
 	const clientOutDir = client?.outDir || 'src/client/';
+	const clientTemplatePath = client?.templatePath || 'src/client/client.template.ts';
+	const routerTemplatePath = router?.templatePath || 'src/router.template.ts';
+
+	const clientTemplate = readFileSync(clientTemplatePath, 'utf8');
+	const routerTemplate = readFileSync(routerTemplatePath, 'utf8');
 
 	const tree = readRoutes(entryDir, []);
 
@@ -54,7 +57,7 @@ export default async function easyRpc({
 	}
 
 	const clientToEntryRel = relative(clientOutDir, entryDir);
-	const clientCode = genClient(tree, clientToEntryRel);
+	const clientCode = genClient(tree, clientToEntryRel, endpointPathPrefix, clientTemplate);
 	const justClientFileName = `${clientName}.ts`;
 	writeFileSync(join(clientOutDir, justClientFileName), clientCode);
 
@@ -63,12 +66,12 @@ export default async function easyRpc({
 		baseDirName = entryDir.slice(2);
 	}
 	const routerToEntryRel = relative(routerOutDir, entryDir);
-	const routerCode = genRouter(tree, routerToEntryRel);
-	writeFileSync(serverRouterOutPath, routerCode);
+	const routerCode = genRouter(tree, routerToEntryRel, endpointPathPrefix, routerTemplate);
+	writeFileSync(routerOutPath, routerCode);
 }
 
-function genRouter(tree: EasyRpcTree, relPathToEntry: string) {
-	let result = updateRouterTemplate(serverTemplate, tree, relPathToEntry, {});
+function genRouter(tree: EasyRpcTree, relPathToEntry: string, prefix: string, template: string) {
+	let result = updateRouterTemplate(template, tree, relPathToEntry, prefix, {});
 	result = result.replace('/* {{imports}} */', '');
 	result = result.replace('/* {{routes}} */', '');
 	return result;
@@ -78,6 +81,7 @@ function updateRouterTemplate(
 	template: string,
 	tree: EasyRpcTree,
 	relPathToEntry: string,
+	prefix: string,
 	usedNames: { [name: string]: number }
 ) {
 	for (const endpoint of tree.endpoints) {
@@ -95,17 +99,17 @@ function updateRouterTemplate(
 		const routeInsertIndex = template.indexOf('/* {{routes}} */');
 		template =
 			template.slice(0, routeInsertIndex) +
-			`\tapp.post('/${endpoint.subDirs.join('/')}/${endpoint.functionName}', ${funcName});\n` +
+			`\tapp.post('/${prefix}/${endpoint.subDirs.join('/')}/${endpoint.functionName}', ${funcName});\n` +
 			template.slice(routeInsertIndex);
 	}
 	for (const sub of tree.subs) {
-		template = updateRouterTemplate(template, sub, relPathToEntry, usedNames);
+		template = updateRouterTemplate(template, sub, relPathToEntry, prefix, usedNames);
 	}
 	return template;
 }
 
-function genClient(tree: EasyRpcTree, relPathToEntry: string) {
-	let result = updateClientTemplate(clientTemplate, tree, relPathToEntry, 0, {});
+function genClient(tree: EasyRpcTree, relPathToEntry: string, prefix: string, template: string) {
+	let result = updateClientTemplate(template, tree, relPathToEntry, prefix, 0, {});
 	result = result.replace('/* {{imports}} */', '');
 	result = result.replace('/* {{functions}} */', '');
 	return result;
@@ -115,6 +119,7 @@ function updateClientTemplate(
 	template: string,
 	tree: EasyRpcTree,
 	relPathToEntry: string,
+	prefix: string,
 	level: number,
 	usedNames: { [name: string]: number }
 ) {
@@ -147,24 +152,28 @@ function updateClientTemplate(
 		for (const endpoint of tree.endpoints) {
 			template =
 				template.slice(0, funcInsertIndex) +
-				genClientFuncSnippet({ ...endpoint, bodyTypeName: bodyName, returnTypeName: returnName }, level) +
+				genClientFuncSnippet({ ...endpoint, bodyTypeName: bodyName, returnTypeName: returnName }, prefix, level) +
 				template.slice(funcInsertIndex);
 		}
 		for (const sub of tree.subs) {
-			template = updateClientTemplate(template, sub, relPathToEntry, level + 1, usedNames);
+			template = updateClientTemplate(template, sub, relPathToEntry, prefix, level + 1, usedNames);
 		}
 		if (tree.dir) {
 			template = template.slice(0, funcInsertIndex) + `${'\t'.repeat(level)}}\n` + template.slice(funcInsertIndex);
 		}
 	}
 	for (const sub of tree.subs) {
-		template = updateClientTemplate(template, sub, relPathToEntry, level + 1, usedNames);
+		template = updateClientTemplate(template, sub, relPathToEntry, prefix, level + 1, usedNames);
 	}
 	return template;
 }
 
-function genClientFuncSnippet({ subDirs, functionName, bodyTypeName, returnTypeName }: Endpoint, level: number) {
-	const path = '/' + subDirs.join('/');
+function genClientFuncSnippet(
+	{ subDirs, functionName, bodyTypeName, returnTypeName }: Endpoint,
+	prefix: string,
+	level: number
+) {
+	const path = '/' + prefix + '/' + subDirs.join('/');
 	const dotTypesPath = ['types', ...subDirs].join('.');
 	const separator = level === 0 ? ' =' : ' :';
 	const end = level === 0 ? ';' : ',';
