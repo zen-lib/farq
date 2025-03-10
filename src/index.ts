@@ -2,6 +2,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { join, extname, relative } from 'path';
 import { Project, FunctionDeclaration } from 'ts-morph';
 
+// TODO: generate from client and router fragment templates
+
 const project = new Project();
 
 export type EasyRpcOptions = {
