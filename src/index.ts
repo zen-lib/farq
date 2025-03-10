@@ -6,21 +6,63 @@ import { Project, FunctionDeclaration } from 'ts-morph';
 
 const project = new Project();
 
+/**
+ * Configuration options for the Easy RPC library
+ */
 export type EasyRpcOptions = {
+	/** Directory containing the RPC endpoint functions */
 	entryDir: string;
+	/**
+	 * URL path prefix for all endpoints
+	 * @default "/"
+	 */
 	endpointPathPrefix?: string;
+	/**
+	 * Client generation options
+	 * @default {}
+	 */
 	client?: ClientOptions;
+	/**
+	 * Router generation options
+	 * @default {}
+	 */
 	router?: RouterOptions;
 };
 
+/**
+ * Options for router generation
+ */
 export type RouterOptions = {
+	/**
+	 * Output file path for the generated router
+	 * @default "src/rpcRouter.ts"
+	 */
 	outPath?: string;
+	/**
+	 * Path to the router template file
+	 * @default "src/router.template.ts"
+	 */
 	templatePath?: string;
 };
 
+/**
+ * Options for client generation
+ */
 export type ClientOptions = {
+	/**
+	 * Output directory for the generated client
+	 * @default "src/client/"
+	 */
 	outDir?: string;
+	/**
+	 * Name of the generated client class
+	 * @default "RpcClient"
+	 */
 	clientName?: string;
+	/**
+	 * Path to the client template file
+	 * @default "src/client/client.template.ts"
+	 */
 	templatePath?: string;
 };
 
