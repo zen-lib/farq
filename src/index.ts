@@ -40,9 +40,14 @@ export type RouterOptions = {
 	outPath?: string;
 	/**
 	 * Path to the router template file
-	 * @default "src/router.template.ts"
+	 * @default "src/templates/router.ts.template"
 	 */
 	templatePath?: string;
+	/**
+	 * Path to the router fragment template file
+	 * @default "src/templates/router.fragment.ts.fragment"
+	 */
+	fragmentPath?: string;
 };
 
 /**
@@ -61,9 +66,14 @@ export type ClientOptions = {
 	clientName?: string;
 	/**
 	 * Path to the client template file
-	 * @default "src/client/client.template.ts"
+	 * @default "src/templates/client.ts.template"
 	 */
 	templatePath?: string;
+	/**
+	 * Path to the client fragment template file
+	 * @default "src/templates/client.fragment.ts.fragment"
+	 */
+	fragmentPath?: string;
 };
 
 interface Endpoint {
