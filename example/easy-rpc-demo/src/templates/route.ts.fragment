@@ -1,0 +1,4 @@
+app.post('{{endpoint}}', (req: FastifyRequest, res: FastifyReply) => {
+	const body = req.body as {{bodyTypeName}};
+	return {{functionName}}(body, req, res);
+}

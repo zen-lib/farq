@@ -9,6 +9,9 @@
 		"build:types": "tsc --project tsconfig.types.json",
 		"test": "echo \"Error: no test specified\" && exit 1"
 	},
+	"bin": {
+		"erpc": "./cli/erpc"
+	},
 	"keywords": [],
 	"author": "",
 	"license": "ISC",

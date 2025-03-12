@@ -1,0 +1,43 @@
+{{imports}}
+
+export interface  {{clientName}}Options {
+	baseUrl: string;
+	updateHeaders?: (headers: HeadersInit) => HeadersInit;
+}
+
+export default function {{clientName}}(options:  {{clientName}}Options) {
+	const jet = initJet(options);
+
+	return {
+		{{functions}}
+	}
+}
+
+interface JetRequest<BodyType = unknown> {
+	body?: BodyType;
+	headers?: HeadersInit;
+}
+
+function initJet(config:  {{clientName}}Options) {
+	return async <ResponseType, BodyType = unknown>(
+		slug: string,
+		request?: JetRequest<BodyType>
+	) => {
+		const headers = new Headers(request?.headers || {});
+		if (config.updateHeaders) {
+			config.updateHeaders(headers);
+		}
+		const body = JSON.stringify(request?.body || {});
+		headers.set('Content-Type', 'application/json');
+		const res = await fetch(`${config.baseUrl}${slug}`, {
+			headers,
+			method: 'POST',
+			body,
+		});
+		const json = await res.json();
+		if (!(res.status >= 200 && res.status < 300)) {
+			throw { status: res.status, response: json };
+		}
+		return json as ResponseType;
+	};
+}
