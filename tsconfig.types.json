@@ -15,7 +15,8 @@
 		"isolatedModules": true,
 		"composite": true,
 		"module": "ESNext",
-		"allowImportingTsExtensions": true
+		"allowImportingTsExtensions": true,
+		"tsBuildInfoFile": "build/tsconfig.tsbuildinfo"
 	},
 	"include": ["src/munk.ts"],
 	"exclude": ["node_modules", "dist"]
