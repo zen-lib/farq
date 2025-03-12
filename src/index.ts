@@ -27,6 +27,11 @@ export type EasyRpcOptions = {
 	 * @default {}
 	 */
 	router?: RouterOptions;
+	/**
+	 * Indentation string for the generated code
+	 * @default "\t"
+	 */
+	indent?: string;
 };
 
 /**
@@ -93,6 +98,7 @@ interface EasyRpcTree {
 export default async function easyRpc({
 	entryDir,
 	endpointPathPrefix = '/',
+	indent = '\t',
 	router = {},
 	client = {},
 }: EasyRpcOptions) {
@@ -101,7 +107,9 @@ export default async function easyRpc({
 	const routerOutDir = routerOutPath.split('/').slice(0, -1).join('/');
 	const clientOutDir = client?.outDir || 'src/client/';
 	const clientTemplatePath = client?.templatePath || 'src/client/client.template.ts';
+	const clientFragmentPath = client?.fragmentPath || 'src/client/client.fragment.ts';
 	const routerTemplatePath = router?.templatePath || 'src/router.template.ts';
+	const routerFragmentPath = router?.fragmentPath || 'src/router.fragment.ts';
 
 	// Ensure endpointPathPrefix has leading and trailing slashes
 	if (endpointPathPrefix !== '/') {
@@ -110,7 +118,9 @@ export default async function easyRpc({
 	}
 
 	const clientTemplate = readFileSync(clientTemplatePath, 'utf8');
+	const clientFragment = readFileSync(clientFragmentPath, 'utf8');
 	const routerTemplate = readFileSync(routerTemplatePath, 'utf8');
+	const routerFragment = readFileSync(routerFragmentPath, 'utf8');
 
 	const tree = readRoutes(entryDir, []);
 
@@ -122,7 +132,7 @@ export default async function easyRpc({
 	}
 
 	const clientToEntryRel = relative(clientOutDir, entryDir);
-	const clientCode = genClient(tree, clientToEntryRel, endpointPathPrefix, clientTemplate);
+	const clientCode = genClient(tree, clientToEntryRel, endpointPathPrefix, clientTemplate, clientFragment, indent);
 	const justClientFileName = `${clientName}.ts`;
 	writeFileSync(join(clientOutDir, justClientFileName), clientCode);
 
@@ -131,12 +141,19 @@ export default async function easyRpc({
 		baseDirName = entryDir.slice(2);
 	}
 	const routerToEntryRel = relative(routerOutDir, entryDir);
-	const routerCode = genRouter(tree, routerToEntryRel, endpointPathPrefix, routerTemplate);
+	const routerCode = genRouter(tree, routerToEntryRel, endpointPathPrefix, routerTemplate, routerFragment, indent);
 	writeFileSync(routerOutPath, routerCode);
 }
 
-function genRouter(tree: EasyRpcTree, relPathToEntry: string, prefix: string, template: string) {
-	let result = updateRouterTemplate(template, tree, relPathToEntry, prefix, {});
+function genRouter(
+	tree: EasyRpcTree,
+	relPathToEntry: string,
+	prefix: string,
+	template: string,
+	fragment: string,
+	indent: string
+) {
+	let result = updateRouterTemplate(template, fragment, tree, relPathToEntry, prefix, indent, {});
 	result = result.replace('/* {{imports}} */', '');
 	result = result.replace('/* {{routes}} */', '');
 	return result;
@@ -144,9 +161,11 @@ function genRouter(tree: EasyRpcTree, relPathToEntry: string, prefix: string, te
 
 function updateRouterTemplate(
 	template: string,
+	fragment: string,
 	tree: EasyRpcTree,
 	relPathToEntry: string,
 	prefix: string,
+	indent: string,
 	usedNames: { [name: string]: number }
 ) {
 	for (const endpoint of tree.endpoints) {
@@ -164,17 +183,31 @@ function updateRouterTemplate(
 		const routeInsertIndex = template.indexOf('/* {{routes}} */');
 		template =
 			template.slice(0, routeInsertIndex) +
-			`\tapp.post('${prefix}${endpoint.subDirs.join('/')}/${endpoint.functionName}', ${funcName});\n` +
+			addIndent(
+				fragment
+					.replace('{{endpoint}}', `${prefix}${endpoint.subDirs.join('/')}/${endpoint.functionName}`)
+					.replace('{{bodyTypeName}}', endpoint.bodyTypeName)
+					.replace('{{functionName}}', funcName),
+				indent,
+				1
+			) +
 			template.slice(routeInsertIndex);
 	}
 	for (const sub of tree.subs) {
-		template = updateRouterTemplate(template, sub, relPathToEntry, prefix, usedNames);
+		template = updateRouterTemplate(template, fragment, sub, relPathToEntry, prefix, indent, usedNames);
 	}
 	return template;
 }
 
-function genClient(tree: EasyRpcTree, relPathToEntry: string, prefix: string, template: string) {
-	let result = updateClientTemplate(template, tree, relPathToEntry, prefix, 0, {});
+function genClient(
+	tree: EasyRpcTree,
+	relPathToEntry: string,
+	prefix: string,
+	template: string,
+	fragment: string,
+	indent: string
+) {
+	let result = updateClientTemplate(template, fragment, tree, relPathToEntry, prefix, 0, indent, {});
 	result = result.replace('/* {{imports}} */', '');
 	result = result.replace('/* {{functions}} */', '');
 	return result;
@@ -182,10 +215,12 @@ function genClient(tree: EasyRpcTree, relPathToEntry: string, prefix: string, te
 
 function updateClientTemplate(
 	template: string,
+	fragment: string,
 	tree: EasyRpcTree,
 	relPathToEntry: string,
 	prefix: string,
 	level: number,
+	indent: string,
 	usedNames: { [name: string]: number }
 ) {
 	for (const endpoint of tree.endpoints) {
@@ -212,23 +247,31 @@ function updateClientTemplate(
 
 		if (tree.dir) {
 			template =
-				template.slice(0, funcInsertIndex) + `${'\t'.repeat(level)}${tree.dir}: {\n` + template.slice(funcInsertIndex);
+				template.slice(0, funcInsertIndex) +
+				`${indent.repeat(level)}${tree.dir}: {\n` +
+				template.slice(funcInsertIndex);
 		}
 		for (const endpoint of tree.endpoints) {
 			template =
 				template.slice(0, funcInsertIndex) +
-				genClientFuncSnippet({ ...endpoint, bodyTypeName: bodyName, returnTypeName: returnName }, prefix, level) +
+				genClientFuncSnippet(
+					{ ...endpoint, bodyTypeName: bodyName, returnTypeName: returnName },
+					prefix,
+					level,
+					indent,
+					fragment
+				) +
 				template.slice(funcInsertIndex);
 		}
 		for (const sub of tree.subs) {
-			template = updateClientTemplate(template, sub, relPathToEntry, prefix, level + 1, usedNames);
+			template = updateClientTemplate(template, fragment, sub, relPathToEntry, prefix, level + 1, indent, usedNames);
 		}
 		if (tree.dir) {
-			template = template.slice(0, funcInsertIndex) + `${'\t'.repeat(level)}}\n` + template.slice(funcInsertIndex);
+			template = template.slice(0, funcInsertIndex) + `${indent.repeat(level)}}\n` + template.slice(funcInsertIndex);
 		}
 	}
 	for (const sub of tree.subs) {
-		template = updateClientTemplate(template, sub, relPathToEntry, prefix, level + 1, usedNames);
+		template = updateClientTemplate(template, fragment, sub, relPathToEntry, prefix, level + 1, indent, usedNames);
 	}
 	return template;
 }
@@ -236,19 +279,24 @@ function updateClientTemplate(
 function genClientFuncSnippet(
 	{ subDirs, functionName, bodyTypeName, returnTypeName }: Endpoint,
 	prefix: string,
-	level: number
+	level: number,
+	indent: string,
+	fragment: string
 ) {
 	const path = prefix + subDirs.join('/');
 	const dotTypesPath = ['types', ...subDirs].join('.');
 	const separator = level === 0 ? ' =' : ' :';
 	const end = level === 0 ? ';' : ',';
-	return `${'\t'.repeat(
+
+	return addIndent(
+		fragment
+			.replace('{{functionName}}', functionName)
+			.replace('{{bodyTypeName}}', bodyTypeName)
+			.replace('{{returnTypeName}}', returnTypeName)
+			.replace('{{endpoint}}', `${path}/${functionName}`),
+		indent,
 		level + 2
-	)}${functionName}${separator} async (body: ${dotTypesPath}.${bodyTypeName}): Promise<${dotTypesPath}.${returnTypeName}> =>
-${'\t'.repeat(
-	level + 3
-)}await jet<${dotTypesPath}.${bodyTypeName}, ${dotTypesPath}.${returnTypeName}>('${path}/${functionName}', { body })${end}
-`;
+	);
 }
 
 function readRoutes(baseDir: string, subDirs: string[]): EasyRpcTree {
@@ -325,4 +373,11 @@ function getReturnTypeName(functionDeclaration: FunctionDeclaration): string | u
 
 	const promiseReturnType = promiseTypeArgs[0];
 	return promiseReturnType.getText();
+}
+
+function addIndent(str: string, indent: string, level: number) {
+	return str
+		.split('\n')
+		.map((line) => indent.repeat(level) + line)
+		.join('\n');
 }
