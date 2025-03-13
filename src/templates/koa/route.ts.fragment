@@ -1,0 +1,4 @@
+router.post('{{endpoint}}', async (ctx) => {
+	const body = ctx.request.body as {{bodyTypeName}};
+	ctx.body = await {{functionName}}(body, ctx);
+});

@@ -1,0 +1,8 @@
+import Router from '@koa/router';
+{{imports}}
+
+function routes(router: Router) {
+	{{routes}}
+
+	return router;
+}

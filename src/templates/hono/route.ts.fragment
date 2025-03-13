@@ -1,0 +1,5 @@
+app.post('{{endpoint}}', async (c) => {
+	const body = await c.req.json() as {{bodyTypeName}};
+	const result = await {{functionName}}(body, c);
+	return c.json(result);
+});

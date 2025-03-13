@@ -1,0 +1,8 @@
+import express, { Router } from 'express';
+{{imports}}
+
+function routes(router: Router) {
+	{{routes}}
+
+	return router;
+}

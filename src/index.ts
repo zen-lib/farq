@@ -1,10 +1,23 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs';
-import { join, extname, relative } from 'path';
+import { join, extname, relative, dirname } from 'path';
 import { Project, FunctionDeclaration } from 'ts-morph';
-
-// TODO: generate from client and router fragment templates
+import { fileURLToPath } from 'url';
 
 const project = new Project();
+
+// Get the directory of the current module (works in both ESM and CJS)
+const getCurrentDir = () => {
+	try {
+		// For ESM
+		if (typeof import.meta.url !== 'undefined') {
+			return dirname(fileURLToPath(import.meta.url));
+		}
+	} catch (e) {
+		// Fallback for CJS or environments where import.meta is not available
+		return process.cwd();
+	}
+	return process.cwd();
+};
 
 /**
  * Configuration options for the Easy RPC library
@@ -35,6 +48,11 @@ export type EasyRpcOptions = {
 };
 
 /**
+ * Supported server frameworks
+ */
+export type ServerType = 'fastify' | 'express' | 'koa' | 'hono';
+
+/**
  * Options for router generation
  */
 export type RouterOptions = {
@@ -44,13 +62,20 @@ export type RouterOptions = {
 	 */
 	outPath?: string;
 	/**
+	 * Server framework to use for the router
+	 * @default "fastify"
+	 */
+	serverType?: ServerType;
+	/**
 	 * Path to the router template file
-	 * @default "src/templates/router.ts.template"
+	 * If not provided, will use the default template for the specified serverType.
+	 * Can be an absolute path or a path relative to the templates directory.
 	 */
 	templatePath?: string;
 	/**
 	 * Path to the router fragment template file
-	 * @default "src/templates/router.fragment.ts.fragment"
+	 * If not provided, will use the default fragment for the specified serverType.
+	 * Can be an absolute path or a path relative to the templates directory.
 	 */
 	fragmentPath?: string;
 };
@@ -71,12 +96,14 @@ export type ClientOptions = {
 	clientName?: string;
 	/**
 	 * Path to the client template file
-	 * @default "src/templates/client.ts.template"
+	 * If not provided, will use the default template.
+	 * Can be an absolute path or a path relative to the templates directory.
 	 */
 	templatePath?: string;
 	/**
 	 * Path to the client fragment template file
-	 * @default "src/templates/client.fragment.ts.fragment"
+	 * If not provided, will use the default fragment.
+	 * Can be an absolute path or a path relative to the templates directory.
 	 */
 	fragmentPath?: string;
 };
@@ -106,10 +133,28 @@ export default async function easyRpc({
 	const routerOutPath = router?.outPath || 'src/rpcRouter.ts';
 	const routerOutDir = routerOutPath.split('/').slice(0, -1).join('/');
 	const clientOutDir = client?.outDir || 'src/client/';
-	const clientTemplatePath = client?.templatePath || 'src/client/client.template.ts';
-	const clientFragmentPath = client?.fragmentPath || 'src/client/client.fragment.ts';
-	const routerTemplatePath = router?.templatePath || 'src/router.template.ts';
-	const routerFragmentPath = router?.fragmentPath || 'src/router.fragment.ts';
+
+	// Use the serverType from router options if provided, otherwise use the global one
+	const routerServerType = router?.serverType || 'fastify';
+
+	// Get the directory of the current module
+	const currentDir = getCurrentDir();
+
+	// Determine template paths based on server type
+	// Paths are relative to the module's directory
+	const resolveTemplatePath = (path: string) => {
+		if (path.startsWith('/')) {
+			// Absolute path
+			return path;
+		}
+		// Relative path - resolve from the module's directory
+		return join(currentDir, '..', 'src', 'templates', path);
+	};
+
+	const clientTemplatePath = client?.templatePath || resolveTemplatePath('client.ts.template');
+	const clientFragmentPath = client?.fragmentPath || resolveTemplatePath('client.ts.fragment');
+	const routerTemplatePath = router?.templatePath || resolveTemplatePath(`${routerServerType}/router.ts.template`);
+	const routerFragmentPath = router?.fragmentPath || resolveTemplatePath(`${routerServerType}/route.ts.fragment`);
 
 	// Ensure endpointPathPrefix has leading and trailing slashes
 	if (endpointPathPrefix !== '/') {
@@ -117,32 +162,49 @@ export default async function easyRpc({
 		endpointPathPrefix = endpointPathPrefix.endsWith('/') ? endpointPathPrefix : endpointPathPrefix + '/';
 	}
 
-	const clientTemplate = readFileSync(clientTemplatePath, 'utf8');
-	const clientFragment = readFileSync(clientFragmentPath, 'utf8');
-	const routerTemplate = readFileSync(routerTemplatePath, 'utf8');
-	const routerFragment = readFileSync(routerFragmentPath, 'utf8');
+	try {
+		const clientTemplate = readFileSync(clientTemplatePath, 'utf8');
+		const clientFragment = readFileSync(clientFragmentPath, 'utf8');
+		const routerTemplate = readFileSync(routerTemplatePath, 'utf8');
+		const routerFragment = readFileSync(routerFragmentPath, 'utf8');
 
-	const tree = readRoutes(entryDir, []);
+		const tree = readRoutes(entryDir, []);
 
-	if (!existsSync(routerOutDir)) {
-		mkdirSync(routerOutDir, { recursive: true });
+		if (!existsSync(routerOutDir)) {
+			mkdirSync(routerOutDir, { recursive: true });
+		}
+		if (!existsSync(clientOutDir)) {
+			mkdirSync(clientOutDir, { recursive: true });
+		}
+
+		const clientToEntryRel = relative(clientOutDir, entryDir);
+		const clientCode = genClient(tree, clientToEntryRel, endpointPathPrefix, clientTemplate, clientFragment, indent);
+		const justClientFileName = `${clientName}.ts`;
+		writeFileSync(join(clientOutDir, justClientFileName), clientCode);
+
+		let baseDirName = entryDir;
+		if (entryDir.startsWith('./')) {
+			baseDirName = entryDir.slice(2);
+		}
+		const routerToEntryRel = relative(routerOutDir, entryDir);
+		const routerCode = genRouter(tree, routerToEntryRel, endpointPathPrefix, routerTemplate, routerFragment, indent);
+		writeFileSync(routerOutPath, routerCode);
+	} catch (error: any) {
+		console.error('Error generating RPC code:', error);
+		if (error.code === 'ENOENT') {
+			console.error(`Could not find template file. Make sure the template paths are correct.`);
+			console.error(`Current template paths:`);
+			console.error(`- Client template: ${clientTemplatePath}`);
+			console.error(`- Client fragment: ${clientFragmentPath}`);
+			console.error(`- Router template: ${routerTemplatePath}`);
+			console.error(`- Router fragment: ${routerFragmentPath}`);
+			console.error(`\nModule directory: ${currentDir}`);
+			console.error(
+				`\nTry providing absolute paths to the templates or check if the templates exist in the expected location.`
+			);
+		}
+		throw error;
 	}
-	if (!existsSync(clientOutDir)) {
-		mkdirSync(clientOutDir, { recursive: true });
-	}
-
-	const clientToEntryRel = relative(clientOutDir, entryDir);
-	const clientCode = genClient(tree, clientToEntryRel, endpointPathPrefix, clientTemplate, clientFragment, indent);
-	const justClientFileName = `${clientName}.ts`;
-	writeFileSync(join(clientOutDir, justClientFileName), clientCode);
-
-	let baseDirName = entryDir;
-	if (entryDir.startsWith('./')) {
-		baseDirName = entryDir.slice(2);
-	}
-	const routerToEntryRel = relative(routerOutDir, entryDir);
-	const routerCode = genRouter(tree, routerToEntryRel, endpointPathPrefix, routerTemplate, routerFragment, indent);
-	writeFileSync(routerOutPath, routerCode);
 }
 
 function genRouter(
@@ -154,8 +216,8 @@ function genRouter(
 	indent: string
 ) {
 	let result = updateRouterTemplate(template, fragment, tree, relPathToEntry, prefix, indent, {});
-	result = result.replace('/* {{imports}} */', '');
-	result = result.replace('/* {{routes}} */', '');
+	result = result.replace('{{imports}}', '');
+	result = result.replace('{{routes}}', '');
 	return result;
 }
 
@@ -174,13 +236,13 @@ function updateRouterTemplate(
 			usedNames[funcName]++;
 			funcName = `${funcName}_${usedNames[funcName]}`;
 		}
-		const importInsertIndex = template.indexOf('/* {{imports}} */');
+		const importInsertIndex = template.indexOf('{{imports}}');
 		template =
 			template.slice(0, importInsertIndex) +
 			`import ${funcName} from '${relPathToEntry}/${endpoint.subDirs.join('/')}/${endpoint.fileName}';\n` +
 			template.slice(importInsertIndex);
 
-		const routeInsertIndex = template.indexOf('/* {{routes}} */');
+		const routeInsertIndex = template.indexOf('{{routes}}');
 		template =
 			template.slice(0, routeInsertIndex) +
 			addIndent(
@@ -208,8 +270,8 @@ function genClient(
 	indent: string
 ) {
 	let result = updateClientTemplate(template, fragment, tree, relPathToEntry, prefix, 0, indent, {});
-	result = result.replace('/* {{imports}} */', '');
-	result = result.replace('/* {{functions}} */', '');
+	result = result.replace('{{imports}}', '');
+	result = result.replace('{{functions}}', '');
 	return result;
 }
 
@@ -235,7 +297,7 @@ function updateClientTemplate(
 			returnName = `${returnName}_${usedNames[returnName]}`;
 		}
 
-		const importsInsertIndex = template.indexOf('/* {{imports}} */');
+		const importsInsertIndex = template.indexOf('{{imports}}');
 		template =
 			template.slice(0, importsInsertIndex) +
 			`import { ${bodyName}, ${returnName} } from '${relPathToEntry}/${endpoint.subDirs.join('/')}/${
@@ -243,7 +305,7 @@ function updateClientTemplate(
 			}';\n` +
 			template.slice(importsInsertIndex);
 
-		const funcInsertIndex = template.indexOf('/* {{functions}} */');
+		const funcInsertIndex = template.indexOf('{{functions}}');
 
 		if (tree.dir) {
 			template =

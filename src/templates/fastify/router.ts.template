@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
-/* {{imports}} */
+{{imports}}
 
 function routes(app: FastifyInstance) {
-	/* {{routes}} */
+	{{routes}}
 }

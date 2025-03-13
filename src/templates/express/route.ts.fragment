@@ -1,0 +1,4 @@
+router.post('{{endpoint}}', (req, res) => {
+	const body = req.body as {{bodyTypeName}};
+	return {{functionName}}(body, req, res);
+});

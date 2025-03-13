@@ -1,56 +1,271 @@
 #!/usr/bin/env node
 
-import easyRpc from '../dist/index.js';
-import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
+import readline from 'readline';
+import easyRpc from '../src/index.js';
 
 // Get the directory where the script is located
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Get the current working directory (where the script is invoked from)
+const cwd = process.cwd();
+
+// Create readline interface for user input
+const rl = readline.createInterface({
+	input: process.stdin,
+	output: process.stdout,
+});
+
+// Helper function to prompt user with a question
+const prompt = (question) => {
+	return new Promise((resolve) => {
+		rl.question(question, (answer) => {
+			resolve(answer);
+		});
+	});
+};
 
 // Parse command line arguments
 const args = process.argv.slice(2);
 const initFlag = args.includes('--init');
 
 if (initFlag) {
-	// Handle initialization
-	console.log('Initializing easy-rpc templates...');
+	initConfig();
+} else {
+	runGenerator();
+}
 
-	// Source templates directory (relative to the script location)
-	const templatesSourceDir = path.resolve(__dirname, '../src/templates');
+// Function to run the generator
+async function runGenerator() {
+	const configPath = path.join(cwd, 'erpc.config.js');
 
-	// Destination directory (in the current working directory)
-	const templatesDestDir = path.resolve(process.cwd(), 'src/templates');
-
-	// Create destination directory if it doesn't exist
-	if (!fs.existsSync(templatesDestDir)) {
-		fs.mkdirSync(templatesDestDir, { recursive: true });
-		console.log(`Created directory: ${templatesDestDir}`);
-	}
-
-	// Copy template files
-	try {
-		const files = fs.readdirSync(templatesSourceDir);
-
-		for (const file of files) {
-			const sourcePath = path.join(templatesSourceDir, file);
-			const destPath = path.join(templatesDestDir, file);
-
-			fs.copyFileSync(sourcePath, destPath);
-			console.log(`Copied: ${file}`);
-		}
-
-		console.log('Templates initialized successfully!');
-	} catch (err) {
-		console.error('Error initializing templates:', err);
+	if (!fs.existsSync(configPath)) {
+		console.log('No configuration file found. Run "erpc --init" to create one.');
 		process.exit(1);
 	}
-} else {
-	// Original functionality
-	const entryDir = args[0];
-	easyRpc({ entryDir }).catch((err) => {
+
+	try {
+		// Import the config file
+		const configUrl = `file://${configPath}`;
+		const configModule = await import(configUrl);
+
+		// Check if the config file has a default export function
+		if (typeof configModule.default === 'function') {
+			// If it's a function, execute it
+			console.log('Executing the generator function from the config file...');
+			await configModule.default();
+		} else {
+			// If it's just a configuration object, run easyRpc with it
+			const config = configModule.default || configModule.configuration;
+
+			if (!config) {
+				throw new Error('Invalid configuration file. No default export or configuration export found.');
+			}
+
+			console.log('Running Easy RPC generator with the following configuration:');
+			console.log(`- Entry directory: ${config.entryDir}`);
+			console.log(`- Server type: ${config.router?.serverType || 'fastify'}`);
+			console.log(`- Router output: ${config.router?.outPath || 'src/rpcRouter.ts'}`);
+			console.log(`- Client output: ${config.client?.outDir || 'src/client/'}`);
+
+			// Run the generator
+			await easyRpc(config);
+
+			console.log('\nGeneration completed successfully!');
+			console.log(`- Router generated at: ${config.router?.outPath || 'src/rpcRouter.ts'}`);
+			console.log(
+				`- Client generated at: ${config.client?.outDir || 'src/client/'}${config.client?.clientName || 'RpcClient'}.ts`
+			);
+		}
+	} catch (error) {
+		console.error('Error running generator:', error);
+		process.exit(1);
+	}
+
+	process.exit(0);
+}
+
+// Function to initialize the config file
+async function initConfig() {
+	console.log('Initializing Easy RPC configuration...');
+
+	// Prompt for server type
+	const serverTypeOptions = ['fastify', 'express', 'koa', 'hono'];
+	console.log('Available server types:');
+	serverTypeOptions.forEach((type, index) => {
+		console.log(`${index + 1}. ${type}`);
+	});
+
+	let serverTypeIndex;
+	do {
+		const answer = await prompt(`Select server type (1-${serverTypeOptions.length}): `);
+		serverTypeIndex = parseInt(answer, 10) - 1;
+	} while (serverTypeIndex < 0 || serverTypeIndex >= serverTypeOptions.length || isNaN(serverTypeIndex));
+
+	const serverType = serverTypeOptions[serverTypeIndex];
+
+	// Prompt for API entry point folder
+	let entryDir;
+	do {
+		entryDir = await prompt('Enter the API entry point folder (e.g., src/api): ');
+	} while (!entryDir);
+
+	// Create the config file content - this is now an executable script that imports and runs easyRpc
+	const configContent = `import easyRpc from 'easy-rpc';
+import { fileURLToPath } from 'url';
+import path from 'path';
+
+// Configuration for Easy RPC
+const config = {
+	entryDir: '${entryDir}',
+	endpointPathPrefix: '/',
+	router: {
+		serverType: '${serverType}',
+		outPath: 'src/rpcRouter.ts'
+	},
+	client: {
+		outDir: 'src/client/',
+		clientName: 'RpcClient'
+	}
+};
+
+// Execute the generator with the configuration
+export default async function runGenerator() {
+	console.log('Running Easy RPC generator with configuration:');
+	console.log(JSON.stringify(config, null, 2));
+
+	try {
+		await easyRpc(config);
+		console.log('Generation completed successfully!');
+		console.log(\`- Router generated at: \${config.router?.outPath || 'src/rpcRouter.ts'}\`);
+		console.log(\`- Client generated at: \${config.client?.outDir || 'src/client/'}\${config.client?.clientName || 'RpcClient'}.ts\`);
+	} catch (error) {
+		console.error('Error generating RPC code:', error);
+		throw error;
+	}
+}
+
+// Export the configuration for reference
+export const configuration = config;
+
+// If this file is executed directly, run the generator
+// This needs to be at the end of the file to ensure all exports are defined first
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+	runGenerator().catch(err => {
 		console.error(err);
 		process.exit(1);
 	});
+}
+`;
+
+	// Write the config file
+	const configPath = path.join(cwd, 'erpc.config.js');
+
+	try {
+		fs.writeFileSync(configPath, configContent);
+		console.log(`Configuration file created at: ${configPath}`);
+
+		// Create directories if they don't exist
+		const entryDirPath = path.join(cwd, entryDir);
+		if (!fs.existsSync(entryDirPath)) {
+			fs.mkdirSync(entryDirPath, { recursive: true });
+			console.log(`Created API entry directory: ${entryDirPath}`);
+
+			// Create a sample API endpoint file
+			createSampleEndpoint(entryDirPath, serverType);
+		}
+
+		const clientOutDir = path.join(cwd, 'src/client');
+		if (!fs.existsSync(clientOutDir)) {
+			fs.mkdirSync(clientOutDir, { recursive: true });
+			console.log(`Created client output directory: ${clientOutDir}`);
+		}
+
+		// Provide next steps
+		console.log('\nNext steps:');
+		console.log('1. Create your API endpoint functions in the specified entry directory');
+		console.log('2. Run the generator with: node --experimental-modules erpc.config.js');
+		console.log('   Or use: npx erpc');
+		console.log(`3. Check out the generated router at src/rpcRouter.ts and client at src/client/RpcClient.ts`);
+	} catch (error) {
+		console.error('Error creating configuration file:', error);
+	}
+
+	rl.close();
+}
+
+// Function to create a sample API endpoint file
+function createSampleEndpoint(entryDirPath, serverType) {
+	const sampleEndpointContent = `
+export interface HelloRequest {
+	name: string;
+}
+
+export interface HelloResponse {
+	message: string;
+	timestamp: number;
+}
+
+/**
+ * A sample API endpoint that greets the user
+ */
+export default async function hello(request: HelloRequest): Promise<HelloResponse> {
+	return {
+		message: \`Hello, \${request.name}!\`,
+		timestamp: Date.now()
+	};
+}
+`;
+
+	const sampleEndpointPath = path.join(entryDirPath, 'hello.ts');
+	fs.writeFileSync(sampleEndpointPath, sampleEndpointContent);
+	console.log(`Created sample API endpoint at: ${sampleEndpointPath}`);
+
+	// Create a README file with usage instructions
+	const readmePath = path.join(entryDirPath, 'README.md');
+	const readmeContent = `# API Endpoints
+
+This directory contains your API endpoint functions that will be automatically
+exposed through your ${serverType} router.
+
+## How to create an endpoint
+
+1. Create a TypeScript file with a default export function
+2. Define request and response interfaces
+3. The function should accept a request object and return a Promise with the response
+
+Example:
+
+\`\`\`typescript
+export interface MyRequest {
+	// Request properties
+}
+
+export interface MyResponse {
+	// Response properties
+}
+
+export default async function myEndpoint(request: MyRequest): Promise<MyResponse> {
+	// Your implementation here
+	return {
+		// Response data
+	};
+}
+\`\`\`
+
+## Folder structure
+
+You can organize your endpoints in subdirectories, and they will be automatically
+nested in the generated client.
+
+For example:
+- \`users/create.ts\` will be accessible as \`client.users.create()\`
+- \`products/categories/list.ts\` will be accessible as \`client.products.categories.list()\`
+`;
+
+	fs.writeFileSync(readmePath, readmeContent);
+	console.log(`Created README with instructions at: ${readmePath}`);
 }
