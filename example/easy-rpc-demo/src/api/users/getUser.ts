@@ -8,10 +8,9 @@ export type GetUserResponse = {
 	email: string;
 };
 
-export default async function getUser(req: GetUserRequest): Promise<GetUserResponse> {
-	// This would typically fetch from a database
+export default async function getUser(body: GetUserRequest): Promise<GetUserResponse> {
 	return {
-		id: req.id,
+		id: body.id,
 		name: 'John Doe',
 		email: 'john.doe@example.com',
 	};
